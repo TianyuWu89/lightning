@@ -1,3 +1,11 @@
+#
+#  File to reproduce the SVM illustrations in the paper
+#  A Coordinate Descent Primal-Dual Algorithm with Large
+#  Step Size and Possibly Non Separable Functions by
+#  O. Fercoq and P. Bianchi
+#
+
+
 import time
 
 import numpy as np
