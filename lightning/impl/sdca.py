@@ -9,6 +9,7 @@ from sklearn.preprocessing import LabelBinarizer
 from .base import BaseClassifier, BaseRegressor
 from .dataset_fast import get_dataset
 from .sdca_fast import _prox_sdca_fit
+from .sdca_intercept_fast import _prox_sdca_intercept_fit, necoara_sdca
 
 
 class _BaseSDCA(object):
@@ -50,10 +51,16 @@ class _BaseSDCA(object):
             alpha1 *= 0.5
             alpha2 *= 0.5
 
+        if self.C is None:
+            self.C = 1. / n_samples
+
         tol = self.tol
         n_calls = n_samples if self.n_calls is None else self.n_calls
         rng = check_random_state(self.random_state)
         loss = self._get_loss()
+
+        if type(self.C) != np.ndarray:
+            self.C = np.ones(3) * self.C  # allows class balancing by accessing to C[1] and C[-1].
 
         for i in xrange(n_vectors):
             y = Y[:, i]
@@ -63,10 +70,19 @@ class _BaseSDCA(object):
                 # L2 penalty (see paper).
                 alpha2 = self._get_alpha2_lasso(y, alpha1)
                 tol = self.tol * 0.5
-
-            _prox_sdca_fit(self, ds, y, self.coef_[i], self.dual_coef_[i],
-                           alpha1, alpha2, loss, self.gamma, self.max_iter,
+            if self.intercept == 0:
+                _prox_sdca_fit(self, ds, y, self.coef_[i], self.dual_coef_[i],
+                           alpha1, alpha2, self.C, loss, self.gamma, self.max_iter,
                            tol, self.callback, n_calls, self.verbose, rng)
+            elif self.intercept == 1:
+                _prox_sdca_intercept_fit(self, ds, y, self.coef_[i], self.dual_coef_[i],
+                           alpha1, alpha2, self.C, loss, self.gamma, self.max_iter,
+                           tol, self.callback, n_calls, self.verbose, rng)
+            elif self.intercept == 2:
+                necoara_sdca(self, ds, y, self.coef_[i], self.dual_coef_[i],
+                             alpha1, alpha2, self.C, loss, self.gamma, self.max_iter,
+                             tol, self.callback, n_calls, self.verbose, rng)
+
 
         return self
 
@@ -82,11 +98,13 @@ class SDCAClassifier(BaseClassifier, _BaseSDCA):
                     + alpha * (1 - l1_ratio) * 0.5 * ||w||^2_2
     """
 
-    def __init__(self, alpha=1.0, l1_ratio=0, loss="hinge", gamma=1.0,
+    def __init__(self, alpha=1.0, l1_ratio=0, C=None, loss="hinge", gamma=1.0,
                  max_iter=100, tol=1e-3, callback=None, n_calls=None, verbose=0,
-                 random_state=None):
+                 random_state=None, intercept=0):
+        self.intercept = intercept
         self.alpha = alpha
         self.l1_ratio = l1_ratio
+        self.C = C
         self.loss = loss
         self.gamma = gamma
         self.max_iter = max_iter
@@ -124,11 +142,12 @@ class SDCARegressor(BaseRegressor, _BaseSDCA):
                     + alpha * (1 - l1_ratio) * 0.5 * ||w||^2_2
     """
 
-    def __init__(self, alpha=1.0, l1_ratio=0, loss="squared", gamma=1.0,
+    def __init__(self, alpha=1.0, l1_ratio=0, C=None, loss="squared", gamma=1.0,
                  max_iter=100, tol=1e-3, callback=None, n_calls=None, verbose=0,
                  random_state=None):
         self.alpha = alpha
         self.l1_ratio = l1_ratio
+        self.C = C
         self.loss = loss
         self.gamma = gamma
         self.max_iter = max_iter

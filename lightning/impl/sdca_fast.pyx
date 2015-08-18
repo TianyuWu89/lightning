@@ -16,12 +16,12 @@ from libc.math cimport fabs
 from lightning.impl.dataset_fast cimport RowDataset
 
 
-cdef _add_l2(double* data,
+cdef void _add_l2(double* data,
              int* indices,
              int n_nz,
              double* w,
              double update,
-             double* regul):
+             double* regul) nogil:
 
     cdef int j, jj
     cdef double delta, w_old
@@ -35,7 +35,7 @@ cdef _add_l2(double* data,
 
 
 cdef inline double _truncate(double v,
-                             double sigma):
+                             double sigma) nogil:
     if v > sigma:
         return v - sigma
     elif v < -sigma:
@@ -44,14 +44,14 @@ cdef inline double _truncate(double v,
         return 0
 
 
-cdef _add_elastic(double* data,
+cdef void _add_elastic(double* data,
                   int* indices,
                   int n_nz,
                   double*w,
                   double* v,
                   double update,
                   double* regul,
-                  double sigma):
+                  double sigma) nogil:
 
     cdef int j, jj
     cdef double delta, w_old, v_old
@@ -90,7 +90,7 @@ cdef _sqnorms(RowDataset X,
 cdef double _pred(double* data,
                   int* indices,
                   int n_nz,
-                  double* w):
+                  double* w) nogil:
 
     cdef int j, jj
     cdef double dot = 0
@@ -102,7 +102,7 @@ cdef double _pred(double* data,
     return dot
 
 
-cdef _solve_subproblem(double*data,
+cdef void _solve_subproblem(double*data,
                        int* indices,
                        int n_nz,
                        double y,
@@ -178,11 +178,11 @@ cdef _solve_subproblem(double*data,
         if error >= 0:
             loss = residual * residual
 
-        dual[0] += (y - dcoef_old) * update - 0.5 * update * update
+        dual[0] += ((y - dcoef_old) * update - 0.5 * update * update) * scale
 
     # Use accumulated loss rather than true primal objective value, which is
     # expensive to compute.
-    primal[0] += loss
+    primal[0] += loss * scale
 
     if update != 0:
         dcoef[0] += update
@@ -195,11 +195,12 @@ cdef _solve_subproblem(double*data,
 
 def _prox_sdca_fit(self,
                    RowDataset X,
-                   np.ndarray[double, ndim=1]y,
-                   np.ndarray[double, ndim=1]coef,
-                   np.ndarray[double, ndim=1]dual_coef,
+                   np.ndarray[double, ndim=1] y,
+                   np.ndarray[double, ndim=1] coef,
+                   np.ndarray[double, ndim=1] dual_coef,
                    double alpha1,
                    double alpha2,
+                   np.ndarray[double, ndim=1] C,
                    int loss_func,
                    double gamma,
                    int max_iter,
@@ -242,8 +243,6 @@ def _prox_sdca_fit(self,
     else:  # L2-only case
         sigma = 0
 
-    scale = 1. / (alpha2 * n_samples)
-
     dual = 0
     regul = 0
 
@@ -262,6 +261,11 @@ def _prox_sdca_fit(self,
 
             # Retrieve row.
             X.get_row_ptr(i, &indices, &data, &n_nz)
+            
+            if y[i] == 1:
+                scale = C[1] / alpha2
+            else:
+                scale = C[2] / alpha2  # C[-1]
 
             _solve_subproblem(data, indices, n_nz, y[i], w, v, dcoef + i,
                               loss_func, sqnorms[i], scale, sigma, gamma,
@@ -276,11 +280,11 @@ def _prox_sdca_fit(self,
 
         # end for ii in xrange(n_samples)
 
-        gap = (primal - dual) / n_samples + alpha2 * regul
+        gap = (primal - dual) * alpha2 + alpha2 * regul
         gap = fabs(gap)
 
         if verbose:
-            print "iter", it + 1, gap
+            print "iter", it + 1, gap, primal * alpha2 + alpha2 * regul
 
         if gap <= tol:
             if verbose:
@@ -290,4 +294,8 @@ def _prox_sdca_fit(self,
     # for it in xrange(max_iter)
 
     for i in xrange(n_samples):
+        if y[i] == 1:
+            scale = C[1] / alpha2
+        else:
+            scale = C[2] / alpha2  # C[-1]
         dcoef[i] *= scale
